@@ -411,7 +411,7 @@ class FST:
                 elif len(transition) == 4:
                     source, insym, target, final_state = transition
                     outsym = None
-                    if insym == '-1':
+                    if insym == '-1' and final_state == '1':
                         if source not in statedict:
                             statedict[source] = State()
                             statedict[source].name = source
@@ -2508,7 +2508,7 @@ def shuffle(fst1: 'FST', fst2: 'FST'):
 
 def kleene_star(fst: 'FST'):
     return fst.kleene_star()
-    
+
 def kleene_plus(fst: 'FST'):
     return fst.kleene_plus()
 
