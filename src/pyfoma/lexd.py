@@ -1427,7 +1427,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                         counts[t.name] += 1
                     elif t.kind == "pair" and t.left and t.right:
                         # This is never checked, but use the same key anyway
-                        pair_key = repr(("__PAIR__", t.left, t.right))
+                        pair_key = "__PAIR__:" + tok.left + ":" + tok.right;
                         counts[pair_key] += 1
             force = {k for k, c in counts.items() if c > 1}
 
@@ -1468,9 +1468,9 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                         return out if out is not None else empty_fst()
 
         # Special: paired token x(i):y(j) binds a row index across occurrences.
-        if isinstance(head, Ref) and isinstance(head.token, TokRef) and head.token.kind == "pair":
+        if isinstance(head, Ref) and head.token.kind == "pair":
             tok = head.token
-            assert tok.col is None or isinstance(tok.col, tuple)
+            assert isinstance(tok.col, tuple)
             if not tok.left or not tok.right:
                 raise ValueError(f"Malformed pair token: {tok}")
             lx = resolve_name(tok.left)
@@ -1480,7 +1480,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
             if lex_x is None or lex_y is None:
                 raise KeyError(f"Unknown lexicon in pair: {tok.left}:{tok.right}")
 
-            ci, co = tok.col  # type: ignore[misc]
+            ci, co = tok.col
             if not (isinstance(ci, int) and isinstance(co, int)):
                 raise ValueError(f"Bad pair columns in {tok}")
             if not (1 <= ci <= lex_x.arity) or not (1 <= co <= lex_y.arity):
@@ -1488,7 +1488,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                     f"Pair columns out of range in {tok}: {tok.left}({lex_x.arity}) {tok.right}({lex_y.arity})"
                 )
 
-            pair_key = repr(("__PAIR__", tok.left, tok.right))
+            pair_key = "__PAIR__:" + tok.left + ":" + tok.right;
             # If already bound, compile only that paired row.
             if pair_key in env:
                 k = env[pair_key]
@@ -1550,7 +1550,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         if isinstance(expr, Alt):
             out = None
             for a in expr.alts:
-                af = compile_expr(a, dict(env), force)
+                af = compile_expr(a, dict(env), set(force))
                 out = af if out is None else union(out, af)
             return out if out is not None else empty_fst()
 
