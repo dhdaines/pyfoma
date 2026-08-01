@@ -65,8 +65,8 @@ print(list(myfst.analyze("cats")))
 """
 
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import List, Tuple, Dict, Optional, Iterable, Set
+from dataclasses import dataclass, field
+from typing import List, Tuple, Dict, Optional, Iterable, Set, Union, Any, Literal
 import re, collections
 
 from pyfoma.fst import FST, State, concatenate, union, kleene_star, kleene_plus
@@ -417,19 +417,22 @@ class LexEntry:
 class LexiconDef:
     name: str
     arity: int = 1
-    entries: List[LexEntry] = None
+    entries: List[LexEntry] = field(default_factory=list)
 
 # ----------------------------------------
 # Pattern AST
 # ----------------------------------------
 
+TokRefKind = Literal["lex", "anonlex", "pair"];
+TokRefSide = Literal["both", "in", "out"];
+
 @dataclass(frozen=True)
 class TokRef:
-    kind: str
+    kind: TokRefKind
     name: str
     # For kind == 'lex': col is Optional[int] or Optional[tuple[int,int]] (for X(i):X(j) same-lex dual-col)
     # For kind == 'pair': col is tuple[int,int] = (left_col, right_col) and left/right store lexicon names.
-    col: Optional[object] = None
+    col: Optional[Union[int, Tuple[int, int]]] = None
     side: str = "both"
     selector: TagSelector = TagSelector.any()
     left: Optional[str] = None
@@ -1088,7 +1091,7 @@ def parse_lexd(lexdstring: str) -> ParsedLexd:
                 # or with side-specific defaults:
                 #   LEXICON B[x]:[y]
                 # These tags are defaults for the block (not emitted as symbols).
-                out_tags: List[str] = []
+                out_tags: Set[str] = set()
                 if ":[" in rest_raw:
                     idxc = rest_raw.find(":[")
                     left_raw = rest_raw[:idxc]
@@ -1099,7 +1102,7 @@ def parse_lexd(lexdstring: str) -> ParsedLexd:
                     rest = rest_raw
 
                 name_part, default_tags = _split_tags(rest)
-                default_tags = list(set(default_tags) | set(out_tags))
+                default_tags = set(default_tags) | set(out_tags)
 
                 arity = 1
                 m2 = re.match(r"^(.+?)\((\d+)\)$", name_part)
@@ -1128,6 +1131,8 @@ def parse_lexd(lexdstring: str) -> ParsedLexd:
         if mode == "PATTERN":
             exprs = _parse_line_to_exprs(line, for_patterns_section=False)
             expr = exprs[0] if len(exprs) == 1 else Alt(exprs)
+            if curr_name is None:
+                raise ValueError("PATTERN with no name")
             prev = patterns[curr_name]
             if isinstance(prev, Seq) and prev.parts == []:
                 patterns[curr_name] = expr
@@ -1140,6 +1145,8 @@ def parse_lexd(lexdstring: str) -> ParsedLexd:
 
         if mode == "LEXICON":
             base, tags = _split_tags(line)
+            if curr_name is None:
+                raise ValueError("LEXICON with no name")
             lex = lexicons[curr_name]
 
             merged = set(curr_block_default_tags)
@@ -1230,7 +1237,7 @@ def _compile_lexicon_entry_variant(
 
 def _compile_lexicon_variant(
     lex: LexiconDef,
-    col: Optional[int],
+    col: Optional[Union[Tuple[int, int], int]],
     side: str,
     selector: TagSelector,
     strict_quoted: bool = False,
@@ -1340,7 +1347,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
 
     anon_counter = 0
     anon_map: Dict[str, str] = {}
-    lex_cache: Dict[Tuple[str, Optional[int], str, Tuple], FST] = {}
+    lex_cache: Dict[Tuple[str, Optional[Union[Tuple[int, int], int]], str, Tuple], FST] = {}
     pat_cache: Dict[Tuple[str, Tuple], FST] = {}
 
     def compile_tok(tok: TokRef) -> FST:
@@ -1373,7 +1380,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                 return pat_cache[key]
             expr = parsed.patterns[name]
             expr = _apply_selector_distribution(expr, tok.selector)
-            f = compile_expr(expr, env={})
+            f = compile_expr(expr, env={}, force=None)
             pat_cache[key] = f
             return f
 
@@ -1399,12 +1406,13 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         lex_cache[cache_key] = f
         return f
 
-    def should_bind(lexdef: LexiconDef, tok: TokRef, env: Dict[str, int], base: str) -> bool:
+    def should_bind(lexdef: LexiconDef, tok: TokRef, force: Set[str], base: str) -> bool:
+        # Only applies to lexicon columns, not pairs!
+        assert tok.kind in ("lex", "anonlex")
         # Bind if:
         #  - explicitly column-referenced (tok.col set), OR
         #  - this lexicon repeats in the current sequence scope (__FORCE_BIND__), OR
         #  - one-sided binding is in effect (tok.side != 'both')
-        force = env.get("__FORCE_BIND__", set())
         if tok.name in force:
             return True
         if tok.col is not None:
@@ -1414,19 +1422,21 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         # multi-column lexicons are bound by construction
         return lexdef.arity > 1
 
-    def compile_seq_aligned(parts: List[PatExpr], env: Dict[str, int]) -> FST:
+    def compile_seq_aligned(parts: List[PatExpr], env: Dict[str, Any], force: Optional[Set[str]]) -> FST:
         # Binding: if a lexicon name appears multiple times in the *current* sequence scope,
         # its choice must be coherent across those occurrences.
-        if "__FORCE_BIND__" not in env:
-            counts = collections.Counter()
+        if force is None:
+            counts: collections.Counter = collections.Counter()
             for e in parts:
                 if isinstance(e, Ref) and isinstance(e.token, TokRef):
                     t = e.token
                     if t.kind == "lex":
                         counts[t.name] += 1
                     elif t.kind == "pair" and t.left and t.right:
-                        counts[("pair", t.left, t.right)] += 1
-            env["__FORCE_BIND__"] = {k for k, c in counts.items() if c > 1}
+                        # This is never checked, but use the same key anyway
+                        pair_key = repr(("__PAIR__", t.left, t.right))
+                        counts[pair_key] += 1
+            force = {k for k, c in counts.items() if c > 1}
 
         if not parts:
             return epsilon_fst()
@@ -1436,10 +1446,12 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         if isinstance(head, Ref):
             tok = head.token
             if tok.kind in ("lex", "anonlex"):
+                # FIXME: Use types to enforce these constraints
+                assert tok.col is None or isinstance(tok.col, int)
                 base = resolve_name(tok.name)
                 if base in parsed.lexicons:
                     lexdef = parsed.lexicons[base]
-                    if should_bind(lexdef, tok, env, base):
+                    if should_bind(lexdef, tok, force, base):
                         if base in env:
                             entry = lexdef.entries[env[base]]
                             if not tok.selector.matches(entry.tags):
@@ -1447,7 +1459,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                             fst_head = _compile_lexicon_entry_variant(
                                 lexdef, entry, tok.col, tok.side, strict_quoted=strict_quoted
                             )
-                            return concatenate(fst_head, compile_seq_aligned(tail, env))
+                            return concatenate(fst_head, compile_seq_aligned(tail, env, force))
 
                         out = None
                         for idx, entry in enumerate(lexdef.entries):
@@ -1458,13 +1470,15 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                             )
                             env2 = dict(env)
                             env2[base] = idx
-                            path = concatenate(fst_head, compile_seq_aligned(tail, env2))
+                            path = concatenate(fst_head, compile_seq_aligned(tail, env2, force))
                             out = path if out is None else union(out, path)
                         return out if out is not None else empty_fst()
 
         # Special: paired token x(i):y(j) binds a row index across occurrences.
         if isinstance(head, Ref) and isinstance(head.token, TokRef) and head.token.kind == "pair":
             tok = head.token
+            # FIXME: Use types to enforce these constraints
+            assert tok.col is None or isinstance(tok.col, tuple)
             if not tok.left or not tok.right:
                 raise ValueError(f"Malformed pair token: {tok}")
             lx = resolve_name(tok.left)
@@ -1482,7 +1496,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                     f"Pair columns out of range in {tok}: {tok.left}({lex_x.arity}) {tok.right}({lex_y.arity})"
                 )
 
-            pair_key = ("__PAIR__", tok.left, tok.right)
+            pair_key = repr(("__PAIR__", tok.left, tok.right))
             # If already bound, compile only that paired row.
             if pair_key in env:
                 k = env[pair_key]
@@ -1502,7 +1516,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                     b = right_syms[i] if i < len(right_syms) else ""
                     labels.append((a, b))
                 fst_head = from_tuples([labels])
-                return concatenate(fst_head, compile_seq_aligned(tail, env))
+                return concatenate(fst_head, compile_seq_aligned(tail, env, force))
 
             # Otherwise, branch over paired rows (zip semantics).
             out = None
@@ -1518,7 +1532,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                 left_syms = _tokenize_symbols(left_str, strict_quoted=strict_quoted)
                 right_syms = _tokenize_symbols(right_str, strict_quoted=strict_quoted)
                 L = max(len(left_syms), len(right_syms))
-                labels: List[Tuple[str, str]] = []
+                labels = []  # List[Tuple[str, str]] = []
                 for i in range(L):
                     a = left_syms[i] if i < len(left_syms) else ""
                     b = right_syms[i] if i < len(right_syms) else ""
@@ -1526,30 +1540,30 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                 fst_head = from_tuples([labels])
                 env2 = dict(env)
                 env2[pair_key] = k
-                path = concatenate(fst_head, compile_seq_aligned(tail, env2))
+                path = concatenate(fst_head, compile_seq_aligned(tail, env2, force))
                 out = path if out is None else union(out, path)
 
             return out if out is not None else empty_fst()
 
-        fst_head = compile_expr(head, env)
-        return concatenate(fst_head, compile_seq_aligned(tail, env))
+        fst_head = compile_expr(head, env, force)
+        return concatenate(fst_head, compile_seq_aligned(tail, env, force))
 
-    def compile_expr(expr: PatExpr, env: Dict[str, int]) -> FST:
+    def compile_expr(expr: PatExpr, env: Dict[str, int], force: Optional[Set[str]]) -> FST:
         if isinstance(expr, Ref):
             return compile_tok(expr.token)
 
         if isinstance(expr, Seq):
-            return compile_seq_aligned(expr.parts, env)
+            return compile_seq_aligned(expr.parts, env, force)
 
         if isinstance(expr, Alt):
             out = None
             for a in expr.alts:
-                af = compile_expr(a, dict(env))
+                af = compile_expr(a, dict(env), force)
                 out = af if out is None else union(out, af)
             return out if out is not None else empty_fst()
 
         if isinstance(expr, Quant):
-            base = compile_expr(expr.expr, env={})
+            base = compile_expr(expr.expr, env={}, force=None)
             if expr.q == "?":
                 return union(epsilon_fst(), base)
             if expr.q == "*":
@@ -1560,13 +1574,13 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
 
         if isinstance(expr, Tagged):
             distributed = _apply_selector_distribution(expr.expr, expr.selector)
-            return compile_expr(distributed, env)
+            return compile_expr(distributed, env, force)
 
         raise ValueError(f"Unhandled node: {expr!r}")
 
     outfst = None
     for expr in parsed.top_patterns:
-        f = compile_expr(expr, env={})
+        f = compile_expr(expr, env={}, force=None)
         outfst = f if outfst is None else union(outfst, f)
 
     if outfst is None:
