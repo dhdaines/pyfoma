@@ -1120,6 +1120,8 @@ def parse_lexd(lexdstring: str) -> ParsedLexd:
             expr = exprs[0] if len(exprs) == 1 else Alt(exprs)
             if curr_name is None:
                 raise ValueError("PATTERN with no name")
+            if curr_name not in patterns:
+                raise ValueError(f"Undefined pattern {curr_name}")
             prev = patterns[curr_name]
             if isinstance(prev, Seq) and prev.parts == []:
                 patterns[curr_name] = expr
@@ -1134,6 +1136,8 @@ def parse_lexd(lexdstring: str) -> ParsedLexd:
             base, tags = _split_tags(line)
             if curr_name is None:
                 raise ValueError("LEXICON with no name")
+            if curr_name not in lexicons:
+                raise ValueError(f"Undefined lexicon {curr_name}");
             lex = lexicons[curr_name]
 
             merged = set(curr_block_default_tags)
@@ -1365,6 +1369,8 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
             key = (name, tok.selector.clauses)
             if key in pat_cache:
                 return pat_cache[key]
+            if name not in parsed.patterns:
+                raise ValueError(f"Undefined pattern {name}")
             expr = parsed.patterns[name]
             expr = _apply_selector_distribution(expr, tok.selector)
             f = compile_expr(expr, env={}, force=None)
@@ -1393,7 +1399,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         lex_cache[cache_key] = f
         return f
 
-    def should_bind(lexdef: LexiconDef, tok: TokRef, force: Set[str], base: str) -> bool:
+    def should_bind(lexdef: LexiconDef, tok: TokRef, force: Set[str]) -> bool:
         # Only applies to lexicon columns, not pairs!
         assert tok.kind in ("lex", "anonlex")
         # Bind if:
@@ -1415,7 +1421,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         if force is None:
             counts: collections.Counter = collections.Counter()
             for e in parts:
-                if isinstance(e, Ref) and isinstance(e.token, TokRef):
+                if isinstance(e, Ref):
                     t = e.token
                     if t.kind == "lex":
                         counts[t.name] += 1
@@ -1438,7 +1444,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                 base = resolve_name(tok.name)
                 if base in parsed.lexicons:
                     lexdef = parsed.lexicons[base]
-                    if should_bind(lexdef, tok, force, base):
+                    if should_bind(lexdef, tok, force):
                         if base in env:
                             entry = lexdef.entries[env[base]]
                             if not tok.selector.matches(entry.tags):
