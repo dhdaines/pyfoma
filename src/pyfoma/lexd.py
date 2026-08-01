@@ -397,17 +397,6 @@ def _tokenize_symbols(x: str, strict_quoted: bool = False) -> List[str]:
         i += 1
     return out
 
-def _entry_to_labels(lexside: str, surfside: str) -> List[Tuple[str, ...]]:
-    L = _tokenize_symbols(lexside)
-    R = _tokenize_symbols(surfside)
-    n = max(len(L), len(R))
-    L += [""] * (n - len(L))
-    R += [""] * (n - len(R))
-    labels: List[Tuple[str, ...]] = []
-    for a, b in zip(L, R):
-        labels.append(_normalize_label((a, b)))
-    return labels
-
 @dataclass
 class LexEntry:
     cols: List[str]
