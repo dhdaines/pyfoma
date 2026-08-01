@@ -433,7 +433,7 @@ class TokRef:
     # For kind == 'lex': col is Optional[int] or Optional[tuple[int,int]] (for X(i):X(j) same-lex dual-col)
     # For kind == 'pair': col is tuple[int,int] = (left_col, right_col) and left/right store lexicon names.
     col: Optional[Union[int, Tuple[int, int]]] = None
-    side: str = "both"
+    side: TokRefSide = "both"
     selector: TagSelector = TagSelector.any()
     left: Optional[str] = None
     right: Optional[str] = None
@@ -737,7 +737,7 @@ def _expand_sieve_line(line: str) -> List[str]:
     return out_lines
 
 def _parse_token_ref(tok: str) -> TokRef:
-    side = "both"
+    side: TokRefSide = "both"
     if tok.startswith(":"):
         side = "out"
         tok = tok[1:]
@@ -1446,7 +1446,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         if isinstance(head, Ref):
             tok = head.token
             if tok.kind in ("lex", "anonlex"):
-                # FIXME: Use types to enforce these constraints
+                # FIXME: Are we sure it can't ever be a pair here?
                 assert tok.col is None or isinstance(tok.col, int)
                 base = resolve_name(tok.name)
                 if base in parsed.lexicons:
@@ -1477,7 +1477,6 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         # Special: paired token x(i):y(j) binds a row index across occurrences.
         if isinstance(head, Ref) and isinstance(head.token, TokRef) and head.token.kind == "pair":
             tok = head.token
-            # FIXME: Use types to enforce these constraints
             assert tok.col is None or isinstance(tok.col, tuple)
             if not tok.left or not tok.right:
                 raise ValueError(f"Malformed pair token: {tok}")
