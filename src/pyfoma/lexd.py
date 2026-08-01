@@ -463,8 +463,6 @@ class ParsedLexd:
 # Pattern tokenizer / parser
 # ----------------------------------------
 
-_SEL_SUFFIX_RE = re.compile(r"^(.*?)(\[[^\]]*\])$")
-
 def _tokenize_pattern_line(line: str) -> List[str]:
     s = line.strip()
     out: List[str] = []
