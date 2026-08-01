@@ -1550,7 +1550,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
         if isinstance(expr, Alt):
             out = None
             for a in expr.alts:
-                af = compile_expr(a, dict(env), set(force))
+                af = compile_expr(a, dict(env), force if force is None else set(force))
                 out = af if out is None else union(out, af)
             return out if out is not None else empty_fst()
 
