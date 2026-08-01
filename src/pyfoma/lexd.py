@@ -1427,7 +1427,7 @@ def compile_lexd(parsed: ParsedLexd, strict_quoted: bool = False) -> FST:
                         counts[t.name] += 1
                     elif t.kind == "pair" and t.left and t.right:
                         # This is never checked, but use the same key anyway
-                        pair_key = "__PAIR__:" + tok.left + ":" + tok.right;
+                        pair_key = "__PAIR__:" + t.left + ":" + t.right;
                         counts[pair_key] += 1
             force = {k for k, c in counts.items() if c > 1}
 
