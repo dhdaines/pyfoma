@@ -121,6 +121,7 @@ def from_tuples(tuples_iter: Iterable[Iterable[Tuple[str, ...]]]) -> FST:
 @dataclass(frozen=True)
 class TagSelector:
     clauses: Tuple[Tuple[frozenset[str], frozenset[str]], ...]
+    raw: str | None = None
 
     @staticmethod
     def any() -> "TagSelector":
@@ -218,7 +219,7 @@ def parse_tag_selector(raw: str) -> TagSelector:
             comp_sel = TagSelector(((frozenset([comp]), frozenset()),))
         sel = sel.and_selector(comp_sel)
 
-    return sel
+    return TagSelector(sel.clauses, raw)
 
 # ----------------------------------------
 # Lexicon parsing helpers
